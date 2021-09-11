@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from lib.model_configurations import set_block, set_function
 
 
+
 REGULARIZATION_FNS = {
     "kinetic_energy": reg_lib.quadratic_cost,
     "jacobian_norm2": reg_lib.jacobian_frobenius_regularization_fn,

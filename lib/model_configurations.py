@@ -10,6 +10,7 @@ from torch_geometric.utils import add_remaining_self_loops
 import torch_sparse
 from torch_geometric.nn.conv import MessagePassing
 
+
 class BlockNotDefined(Exception):
   pass
 
