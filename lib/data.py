@@ -50,7 +50,7 @@ def trainingset_construct(x_data, y_data, batch_val):
 
 
 def metr_la_data(path):
-    raw_data = pd.read_hdf(r'./data/metr-la.h5').to_numpy()
+    raw_data = pd.read_hdf(path).to_numpy()
     x = []; y = []
     for i in range(np.size(raw_data,0)-1):
         x.append(raw_data[i,:])
@@ -59,3 +59,18 @@ def metr_la_data(path):
     train_data_loader, test_data_loader = trainingset_construct(x_data=x, y_data=y, batch_val=100)
 
     return train_data_loader, test_data_loader
+
+# def PEMS_04(path, n):
+#     'description'
+#     # this function is used for constructing the training data loader of PEMS data
+#     'input'
+#     # path: the local path of the dataset
+#     # n: number of timestamp used for prediction of next time step
+
+#     raw_data = np.load(path, allow_pickle=False)['data']
+#     x = []; y = []
+#     for i in range(np.size(raw_data,0)-n):
+#         x.append(raw_data[i,:])
+#         y.append(raw_data[i+1,:])
+#     x = np.array(x); y = np.array(y)
+#     train_data_loader, test_data_loader = trainingset_construct(x_data=x, y_data=y, batch_val=100)
