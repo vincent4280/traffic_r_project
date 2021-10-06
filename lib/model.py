@@ -9,8 +9,8 @@ from torch_geometric.data import Data
 from torch.utils.data import Dataset, DataLoader
 # from torchdyn.core.neuralde import NeuralODE
 import torch.nn as nn
-# from torchdiffeq import odeint
-from torchdiffeq import odeint_adjoint as odeint
+from torchdiffeq import odeint
+# from torchdiffeq import odeint_adjoint as odeint
 from torch_geometric.utils import softmax
 import numpy as np
 
@@ -112,7 +112,7 @@ class SpGraphTransAttentionLayer(nn.Module):
 
 
 class Net(torch.nn.Module):
-    def __init__(self, num_nodes, num_features, edge_index, edge_attr, num_timestep):
+    def __init__(self, num_nodes, num_features, edge_index, edge_attr, num_timestep, device):
         super(Net, self).__init__()
         'description of initialization'
         # num_nodes: number of nodes in the sensor network
@@ -134,9 +134,10 @@ class Net(torch.nn.Module):
         self.time_embed2 = nn.Linear(128, num_nodes)
 
         self.num_nodes = num_nodes
-        self.edge_index = edge_index
-        self.edge_attr = edge_attr
+        self.edge_index = edge_index.to(device)
+        self.edge_attr = edge_attr.to(device)
         self.num_timestep = num_timestep
+        self.device = device
 
     def div_operator(self):
 
@@ -146,7 +147,7 @@ class Net(torch.nn.Module):
                 if self.edge_index[0,k] == i_index:
                     j_index = self.edge_index[1,k]
                     div_op[i_index, j_index] = self.edge_attr[j_index]
-        div_op = torch.from_numpy(div_op).float()
+        div_op = torch.from_numpy(div_op).float().to(self.device)
 
         return div_op
 
@@ -182,7 +183,7 @@ class Net(torch.nn.Module):
         # in this function, we add padding by ourselves
         x = x.unsqueeze(1)
 
-        padding = torch.zeros((x.size(0),x.size(1),x.size(2), 1), dtype=torch.float)
+        padding = torch.zeros((x.size(0),x.size(1),x.size(2), 1), dtype=torch.float).to(self.device)
         x = torch.cat((padding, x, padding), dim=3)
         x = self.time_conv1(x)
         x = self.time_conv2(x)
@@ -248,7 +249,7 @@ class Net(torch.nn.Module):
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 edge_index = torch.from_numpy(edge_index.astype(int))
 edge_attr = torch.from_numpy(edge_attr).float()
-model = Net(num_nodes=307, num_features=1, edge_index=edge_index, edge_attr=edge_attr, num_timestep=4).to(device).float()
+model = Net(num_nodes=307, num_features=1, edge_index=edge_index, edge_attr=edge_attr, num_timestep=4, device=device).to(device).float()
 optimizer = torch.optim.Adam(model.parameters(), weight_decay=5e-4, lr=0.01)  # Only perform weight-decay on first convolution.
 criterion = nn.MSELoss()
 
@@ -266,6 +267,8 @@ def train(epoch, train_loader, model, optimize_operator, criterion, device):
 
         optimize_operator.zero_grad()
         t_span = (t[0]).squeeze(0)
+
+        print('calculating ODE')
         out = odeint(model, x, t_span)
         y_predict = out[-1]
         loss = criterion(y_predict, y)
