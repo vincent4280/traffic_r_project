@@ -22,39 +22,15 @@ import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, ChebConv 
 from torch_scatter import scatter_add
 
+import sys
+sys.path.append(r'../')
+from lib.data import *
 
-edge_index = torch.tensor([[0, 1, 1, 2],
-                           [1, 0, 2, 1]], dtype=torch.long)
-                          
-x = torch.rand((100, 12, 2))
+x_data, y_data, t, edge_index, edge_attr = PEMS_04(r'../data/PEMS04', 0, 4)   # feature_dim=0 and timestep=4
+print(x_data.shape, y_data.shape, t.shape, edge_index.shape, edge_attr.shape)
 
-y = torch.rand((100, 12, 2))
-edge_attr = torch.tensor([2,2,3,3], dtype=torch.float)
-
-# data = Data(x=x, y=y, edge_index=edge_index, edge_attr=edge_attr)
-
-class MyDataset(Dataset):
-    def __init__(self, x, y, edge_index, edge_attr):    
-        self.data = x
-        self.target = y
-        self.node_feature_dim = x.size(2)
-        self.edge_index = edge_index
-        self.edge_attr = edge_attr
-        
-    def __getitem__(self, index):
-        x = self.data[index]
-        y = self.target[index]
-        
-        return x, y
-    
-    def __len__(self):
-        return len(self.data)
-
-dataset = MyDataset(x,y,edge_index, edge_attr)
-loader = DataLoader(dataset=dataset, batch_size=5, shuffle=True)
-
-# conv1 = ChebConv(dataset.node_feature_dim, 64, K=2)
-# conv2 = ChebConv(64, 1, K=2)
+dataset = MyDataset(x_data, y_data, t)
+loader = DataLoader(dataset=dataset, batch_size=59, shuffle=False)
 
 
 class SpGraphTransAttentionLayer(nn.Module):
@@ -135,10 +111,15 @@ class SpGraphTransAttentionLayer(nn.Module):
     return self.__class__.__name__ + ' (' + str(self.in_features) + ' -> ' + str(self.out_features) + ')'
 
 
-
 class Net(torch.nn.Module):
     def __init__(self, num_nodes, num_features, edge_index, edge_attr, num_timestep):
         super(Net, self).__init__()
+        'description of initialization'
+        # num_nodes: number of nodes in the sensor network
+        # num_feature: number of feature per sensor read
+        # edge_index: (2, num_edge)
+        # edge_sttr: (num_edge)
+        # num_timestep: number of timestamp for sequential prediction
 
         self.conv1 = ChebConv(num_features, 64, K=2)
         self.conv2 = ChebConv(64, 1, K=2)
@@ -149,6 +130,8 @@ class Net(torch.nn.Module):
         self.attention_layer = SpGraphTransAttentionLayer(1,2)
         self.Wout1 = nn.Linear(1, 64)
         self.Wout2 = nn.Linear(64, num_features)
+        self.time_embed1 = nn.Linear(1, 128)
+        self.time_embed2 = nn.Linear(128, num_nodes)
 
         self.num_nodes = num_nodes
         self.edge_index = edge_index
@@ -207,6 +190,14 @@ class Net(torch.nn.Module):
         x = self.time_conv4(x)
 
         return x.squeeze(1)
+    
+    def time_embedding(self, t):
+        
+        t = t.unsqueeze(0)
+        t = self.time_embed1(t)
+        t = self.time_embed2(t)
+
+        return t
 
     def forward(self, t, x_list):
         'description'
@@ -216,7 +207,7 @@ class Net(torch.nn.Module):
         #         the input of the network which is the grapg signal, graph of n timestep
         #         these signals is cat in the second dimension
         'output'
-        
+        # partial_x_new: derivative respect to time t and state x_list
 
         'code start here'
         # seperate the list
@@ -229,8 +220,12 @@ class Net(torch.nn.Module):
         # cat the feature of different timesteps, add padding by myself and add the dimension of channels
         H_time_cat = torch.cat(tuple(H_list), dim=2)
         
-        # apply time convolution (now the timestep = 4), return (batch * num_node * 1)
+        # apply time convolution (now the timestep = 4), return (batch, num_node, 1)
         H_st = self.time_convolution(H_time_cat)
+
+        # add time embedding effect to sensor reading
+        time_embedding = self.time_embedding(t).unsqueeze(-1)
+        H_st = H_st + time_embedding.repeat(H_st.size(0),1,1)
 
         # obtain multi-attention attribute A: [batch, n_edges, n_heads]
         A, _ = self.attention_layer(H_st, self.edge_index)
@@ -242,23 +237,59 @@ class Net(torch.nn.Module):
         partial_x_partial_t = self.diffusion_G_cal(H_st, A, div_op)
 
         # combine with previous time step
-        x_new = x_list[-1] + partial_x_partial_t
-        x_new = torch.cat((x_list[-3], x_list[-2], x_list[-1], x_new), dim=1)
+        dt = 1/287    # default setting if time interval is 1
+        x_new = partial_x_partial_t
+        partial_x_new = torch.cat(((x_list[-3]-x_list[-4])/dt, (x_list[-2]-x_list[-3])/dt, (x_list[-1]-x_list[-2])/dt, x_new), dim=1)
 
-        return x_new
+        return partial_x_new
 
 
-
+# define the model
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = Net(3, 2, edge_index, edge_attr, 4).to(device)
-# optimizer = torch.optim.Adam(model.parameters(), weight_decay=5e-4, lr=0.01)  # Only perform weight-decay on first convolution.
+edge_index = torch.from_numpy(edge_index.astype(int))
+edge_attr = torch.from_numpy(edge_attr).float()
+model = Net(num_nodes=307, num_features=1, edge_index=edge_index, edge_attr=edge_attr, num_timestep=4).to(device).float()
+optimizer = torch.optim.Adam(model.parameters(), weight_decay=5e-4, lr=0.01)  # Only perform weight-decay on first convolution.
+criterion = nn.MSELoss()
+
+print('finish intialization')
 
 
-for (x,y) in loader:
-    # out = model.forward(1,x)
-    out = odeint(model, x, torch.tensor([0,0.25,0.5,0.75,1], dtype=torch.float64))
-    print(out[-1])
+def train(epoch, train_loader, model, optimize_operator, criterion, device):
+    device = device
+    train_loss = 0
+    for batch_idx, (x, y, t) in enumerate(train_loader):
 
-    break
+        x = x.to(device)
+        y = y.to(device)
+        t = t.to(device)
+
+        optimize_operator.zero_grad()
+        t_span = (t[0]).squeeze(0)
+        out = odeint(model, x, t_span)
+        y_predict = out[-1]
+        loss = criterion(y_predict, y)
+        loss.backward()
+        train_loss += loss.item()
+        optimize_operator.step()
+
+        print('batch:', batch_idx)
+
+    return model, train_loss
+
+for epoch in range(1):
+
+        # with torch.no_grad():
+        #     print(1)
+
+        model, L = train(epoch, loader, model, optimizer, criterion, device)
+        print('epoch:', epoch, 'loss:', L)
+
+        
+
+
+
+
+
 
 
