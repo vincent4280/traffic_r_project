@@ -318,29 +318,29 @@ print(result.shape)
 # print('finish intialization')
 
 
-# def train(epoch, train_loader, model, optimize_operator, criterion, device):
-#     device = device
-#     train_loss = 0
-#     for batch_idx, (x, y, t) in enumerate(train_loader):
+def train(epoch, train_loader, model, optimize_operator, criterion, device):
+    device = device
+    train_loss = 0
+    for batch_idx, (x, y, t) in enumerate(train_loader):
 
-#         x = x.to(device)
-#         y = y.to(device)
-#         t = t.to(device)
+        x = x.to(device)
+        y = y.to(device)
+        t = t.to(device)
 
-#         optimize_operator.zero_grad()
-#         t_span = (t[0]).squeeze(0)
+        optimize_operator.zero_grad()
+        t_span = (t[0]).squeeze(0)
 
-#         print('calculating ODE')
-#         out = odeint(model, x, t_span)
-#         y_predict = out[-1]
-#         loss = criterion(y_predict, y)
-#         loss.backward()
-#         train_loss += loss.item()
-#         optimize_operator.step()
+        print('calculating ODE')
+        out = odeint(model, x, t_span)
+        y_predict = out[-1]
+        loss = criterion(y_predict, y)
+        loss.backward()
+        train_loss += loss.item()
+        optimize_operator.step()
 
-#         print('batch:', batch)
+        print('batch:', batch)
 
-#     return model, train_loss
+    return model, train_loss
 
 # for epoch in range(1):
 
