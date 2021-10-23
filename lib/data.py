@@ -58,60 +58,46 @@ def metr_la_data(path):
 
     return train_data_loader, test_data_loader
 
-def PEMS_04(path, feature_dim, n):
+def PEMS_04(path, n):
     'description'
     # this function is used for constructing the training data loader of PEMS data
     # the dataset has 59 days data, every 5 minutes per reading, 307 sensors, 3 features (PEMS04)
     'input'
     # path: the local path of the dataset
+    # raw_data: (time_stamp, #node, feature_dim)
     # feature_dim: choose one of the feature for prediction 0: flow, 1: speed, 2: occupancy
     # n: number of timestamp used for prediction of next time step
 
+    # load the sensor data
     raw_data = np.load(path + '/pems04.npz', allow_pickle=False)['data']
-    # network_data = pd.read_csv(path + '/distance.csv', header=None).to_numpy()
+    
+    # calculate network adj matrix
     network_data = np.genfromtxt(path + '/distance.csv', delimiter=',')
     network_data = network_data[1:np.size(network_data,0),:]
     edge_index = np.transpose(network_data)[0:2, :]
     edge_attr = np.transpose(network_data)[2, :]
+    num_nodes = np.size(raw_data,1)
+    adj = np.zeros((num_nodes, num_nodes))
+    for k in range(np.size(edge_attr)):
+        adj[edge_index[0,k], edge_index[1,k]] = edge_attr[k]
+        adj[edge_index[1,k], edge_index[0,k]] = edge_attr[k]
+
+    # store the data
     x = []; y = []; t = []
 
+    num_datapoints = np.size(raw_data,0)
     reading_per_day =  24 * 60 / 5
-    days = int(np.size(raw_data,0) / reading_per_day)
-    Time_stamp = np.linspace(0, 1, int(reading_per_day), endpoint=True)
+    Time_stamp = np.linspace(0, 10, int(reading_per_day), endpoint=True)
 
-    print('time interval:', Time_stamp[1] - Time_stamp[0])
+    for i in range(num_datapoints - 3*n):
+        x.append(raw_data[i:i+n, :, :])
+        y.append(raw_data[i+n-1:i+2*n-1, :, :])
+        t.append(Time_stamp[int(i%reading_per_day)])
+    x = np.array(x); y = np.array(y); t = np.array(t)
 
-    for i in range(days):
-        starting_index = int(i * reading_per_day)
-        time_index = 0
-        for j in range(starting_index, int(starting_index + reading_per_day - 2*n + 1)):
-            previous_n_timestep = []
-            prediction_n_timestep = []
-            for k in range(n):
-                previous_n_timestep.append(raw_data[j+k, :, feature_dim])
-                prediction_n_timestep.append(raw_data[j+n+k, :, feature_dim])
-            previous_n_timestep = np.hstack((tuple(previous_n_timestep))).reshape(-1,1)
-            prediction_n_timestep = np.hstack((tuple(prediction_n_timestep))).reshape(-1,1)
+    return x, y, t, adj
 
-            x.append(previous_n_timestep)
-            y.append(prediction_n_timestep)
-            t.append((Time_stamp[time_index+n-1:time_index+n+4]).reshape(-1,n+1))
-            time_index += 1
-
-        # rearange the data sequence
-        data_per_day = int(len(x)/days)
-        x_new = []
-        y_new = []
-        t_new = []
-        for i in range(data_per_day):
-            for j in range(days):
-                x_new.append(x[i + data_per_day * j])
-                y_new.append(y[i + data_per_day * j])
-                t_new.append(t[i + data_per_day * j])
-
-    x = np.array(x_new); y = np.array(y_new); t = np.array(t_new)
-
-    return x, y, t, edge_index, edge_attr
+    
 
 
 def PEMS_04_for_traffic_transformer(path, feature_dim):
