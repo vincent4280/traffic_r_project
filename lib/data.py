@@ -26,7 +26,7 @@ class MyDataset(Dataset):
         self.data = torch.from_numpy(x).float()
         self.target = torch.from_numpy(y).float()
         self.timestamp = torch.from_numpy(t).float()
-        
+
     def __getitem__(self, index):
         x = self.data[index]
         y = self.target[index]

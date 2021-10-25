@@ -1,4 +1,4 @@
-__all__ = ['cheb_polynomial', 'Spatial_Attention_layer', 'cheb_conv_with_SAt']
+__all__ = ['cheb_polynomial', 'Spatial_Attention_layer', 'cheb_conv_with_SAt', 'cheb_conv']
 
 import numpy as np
 import torch.nn as nn
@@ -103,7 +103,7 @@ class cheb_conv_with_SAt(nn.Module):
     '''
     K-order chebyshev graph convolution with Spatial Attention scores
     '''
-    def __init__(self, num_of_filters, K, cheb_polynomials, num_of_features, **kwargs):
+    def __init__(self, num_of_filters, K, cheb_polynomials, num_of_features):
         '''
         Parameters
         ----------
@@ -114,7 +114,7 @@ class cheb_conv_with_SAt(nn.Module):
         K: int, up K - 1 order chebyshev polynomials will be used in this convolution. It defines the neighbourhood distance of node aggragration.
         '''
 
-        super(cheb_conv_with_SAt, self).__init__(**kwargs)
+        super(cheb_conv_with_SAt, self).__init__()
         self.K = K
         self.num_of_filters = num_of_filters
         self.cheb_polynomials = cheb_polynomials
@@ -180,6 +180,92 @@ class cheb_conv_with_SAt(nn.Module):
 
                 # shape is (batch_size, #node, #feature_per_node)
                 rhs = self.batch_dot(T_k_with_at.transpose((0, 2, 1)), graph_signal)
+
+                # shape is (batch_size, #node, num_of_filters)
+                output = output + torch.mm(rhs, theta_k)
+
+            outputs.append(output.unsqueeze(-1))
+
+        return F.relu(torch.cat(outputs, dim=-1))
+
+class cheb_conv(nn.Module):
+    '''
+    K-order chebyshev graph convolution without Spatial Attention scores
+    '''
+    def __init__(self, num_of_filters, K, cheb_polynomials, num_of_features, **kwargs):
+        '''
+        Parameters
+        ----------
+        num_of_filters: int
+
+        num_of_features: int, num of input features
+
+        K: int, up K - 1 order chebyshev polynomials will be used in this convolution. It defines the neighbourhood distance of node aggragration.
+        '''
+
+        super(cheb_conv_with_SAt, self).__init__(**kwargs)
+        self.K = K
+        self.num_of_filters = num_of_filters
+        self.cheb_polynomials = cheb_polynomials
+        self.Theta = nn.Parameter(torch.ones((self.K, num_of_features, self.num_of_filters)))
+
+    def batch_dot(self, x1, x2):
+        '''
+        description: this function is used to batch dot two tensors
+        (batch, N, K) * (batch, K, M) --> (batch, N, M)
+
+        input:
+        x1: (batch, N, K)
+        x2: (batch, K, M)
+
+        output:
+        y: (batch, N, M)
+
+        '''
+
+        batch_num = x1.shape[0]
+        y_list = []
+        for i in range(batch_num):
+            y_list.append(torch.mm(x1[i], x2[i]))
+        y = torch.cat(y_list,dim=0)
+
+        return y
+
+    def forward(self, x):
+        '''
+        Chebyshev graph convolution operation
+
+        Parameters
+        ----------
+        x: mx.ndarray, graph signal matrix
+           shape is (batch_size, #node, #feature_per_node, #time_step)
+
+        spatial_attention: mx.ndarray, shape is (batch_size, #node, #node)
+                           spatial attention scores
+
+        Returns
+        ----------
+        mx.ndarray, shape is (batch_size, #node, self.num_of_filters, #time_step)
+        '''
+
+        (batch_size, num_of_vertices, num_of_features, num_of_timesteps) = x.shape
+
+        outputs = []
+        for time_step in range(num_of_timesteps):
+            # shape is (batch_size, #node, #feature_per_node)
+            graph_signal = x[:, :, :, time_step]
+            output = torch.zeros((batch_size, num_of_vertices, self.num_of_filters))
+            
+            for k in range(self.K):
+
+                # shape of T_k is (#node, #node)
+                T_k = (self.cheb_polynomials[k]).unsqueeze(0).repeat(batch_size,1,1)
+
+                # shape of theta_k is (#feature_per_node, num_of_filters)
+                theta_k = self.Theta[k]
+
+                # shape is (batch_size, #node, #feature_per_node)
+                rhs = self.batch_dot(T_k.transpose((0, 2, 1)), graph_signal)
 
                 # shape is (batch_size, #node, num_of_filters)
                 output = output + torch.mm(rhs, theta_k)
