@@ -1,5 +1,9 @@
-import sys
+import sys, os
 sys.path.append(r'../')
+
+# for debug
+os.chdir(sys.path[0])
+
 from lib.ASTODE import *
 from lib.data import *
 

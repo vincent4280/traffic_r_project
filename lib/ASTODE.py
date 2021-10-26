@@ -27,9 +27,11 @@ class init_hidden_state_encoder(nn.Module):
         super(init_hidden_state_encoder, self).__init__()
 
         self.K = len(cheb_polynomial)
-        self.GNN_layer = cheb_conv(num_of_filters=64, K=self.K, cheb_polynomials=cheb_polynomial, num_of_features=num_of_features)
+        self.GNN_layer = cheb_conv(features_in_dim=num_of_features, features_out_dim=num_of_features, K=self.K, cheb_polynomials=cheb_polynomial)
+
         self.time_conv1 = nn.Linear(in_features=temporal_input_dim, out_features=64)
         self.time_conv2 = nn.Linear(in_features=64, out_features=temporal_hidden_dim)
+        self.activation = nn.ReLU()
 
     def forward(self, x, T):
         '''
@@ -40,7 +42,7 @@ class init_hidden_state_encoder(nn.Module):
         x_after_Spatial_agg = self.GNN_layer.forward(x)
 
         # output is (batch, #node, #feature, temporal_hidden_dim)
-        x_after_ST_agg = self.time_conv2(nn.ReLU(self.time_conv1(x_after_Spatial_agg)))
+        x_after_ST_agg = self.time_conv2(self.activation(self.time_conv1(x_after_Spatial_agg)))
 
         return x_after_ST_agg
 
@@ -67,20 +69,22 @@ class ode_derivative_fun(nn.Module):
 
         K = len(cheb_polynomials)
         self.time_embed = nn.Linear(1, num_of_nodes)
-        self.att_layer = cheb_conv_with_SAt(num_of_filters=64, K=K, cheb_polynomials=cheb_polynomials, num_of_features=num_of_features)
+        self.att_layer = cheb_conv_with_SAt(features_in_dim=num_of_features, features_out_dim=num_of_features, K=K, cheb_polynomials=cheb_polynomials)
         self.Spatial_Attention_score = Spatial_Attention_layer(num_time_step=num_time_step, num_of_features=num_of_features, num_of_nodes=num_of_nodes)
 
-    def forward(self, x, t):
+    def forward(self, t, x):
         
-        # encode the time_step information into x, output is (batch, #node, #feature, #time_stamp)
         (batchsize, num_nodes, feature_dim, time_stamp) = x.shape
-        time_info = self.time_embed(t.unsqueeze(0)).unsqueeze(0).squeeze(-1).squeeze(-1).repeat(batchsize,1,feature_dim,time_stamp)
+
+        # encode the time_step information into x, output is (batch, #node, #feature, #time_stamp)
+        t = t.unsqueeze(0).unsqueeze(0).repeat(batchsize,1)
+        time_info = self.time_embed(t).unsqueeze(-1).unsqueeze(-1).repeat(1,1,feature_dim, time_stamp)
         x = x + time_info
 
         spatial_attention = self.Spatial_Attention_score(x)
         derivative = self.att_layer(x, spatial_attention)
 
-        return derivative
+        return derivative.squeeze(-1)
 
 class GDEFunc(nn.Module):
     def __init__(self, gnn:nn.Module):
@@ -120,7 +124,7 @@ class ControlledGDEFunc(nn.Module):
         # temporal_hidden_dim: temporal dimension of the hidden initial state
         
         forward function input:
-        # x: current traffic state, not the hidden state (batch, #node, #feature, temporal_input_dim)
+        # x: current traffic state, not the hidden state (batch, #node, #feature)
         # t: current time step (0-D tensor)
 
         forward function output:
@@ -135,13 +139,14 @@ class ControlledGDEFunc(nn.Module):
 
         cheb_polynomials = cheb_polynomial(adj, K)
         self.Hinit_encoder = init_hidden_state_encoder(cheb_polynomials, temporal_input_dim, temporal_hidden_dim, feature_dim)
-        self.derivative_calculator = ode_derivative_fun(cheb_polynomials, num_nodes, feature_dim, time_stamp)
+        self.derivative_calculator = ode_derivative_fun(cheb_polynomials, num_nodes, feature_dim, temporal_hidden_dim + 1)
     
     def init_hidden(self, x, T):
-        self.h0 = self.Hinit_encoder.forward(x=x, T=T)
+        self.h0 = self.Hinit_encoder.forward(x=x, T=0)
 
     def forward(self, t, x):
         self.nfe += 1
+        x = x.unsqueeze(-1)
         x = torch.cat([x, self.h0], dim=-1)   
         derivative = self.derivative_calculator.forward(x=x, t=t)
 
@@ -180,7 +185,7 @@ class AST_GODE(nn.Module):
         self.method = method
         self.rtol = rtol
         self.atol = atol
-        self.ajoint_flag = adjoint
+        self.adjoint_flag = adjoint
 
     def forward(self, x:torch.Tensor, T, t_span:torch.Tensor):
 
@@ -190,13 +195,14 @@ class AST_GODE(nn.Module):
         # obtain integration time_stamp
         self.integration_time = t_span.float()
         self.integration_time = self.integration_time.type_as(x)   # 转换t_interval 为与x相同的数据结构
+
+        print(self.integration_time.shape)
+        print((x[:,:,:,-1]).shape)
         
         if self.adjoint_flag:
-            out = torchdiffeq.odeint_adjoint(self.odefunc, x, self.integration_time,
-                                             rtol=self.rtol, atol=self.atol, method=self.method)
+            out = torchdiffeq.odeint_adjoint(self.odefunc, x[:,:,:,-1], self.integration_time, rtol=self.rtol, atol=self.atol, method=self.method)
         else:
-            out = torchdiffeq.odeint(self.odefunc, x, self.integration_time,
-                                     rtol=self.rtol, atol=self.atol, method=self.method)
+            out = torchdiffeq.odeint(self.odefunc, x[:,:,:,-1], self.integration_time, rtol=self.rtol, atol=self.atol, method=self.method)
             
         return out[1:(out.shape[0])]    # output the result of the evaluation points
     
