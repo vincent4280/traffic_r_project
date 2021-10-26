@@ -9,7 +9,7 @@ import torch.nn as nn
 import numpy as np
 
 # load the data
-x, y, t, adj = PEMS_04(r'../data/PEMS04', 12, 1)
+x, y, t, adj = PEMS_04(r'../../data/PEMS04', 12, 1)
 x = np.expand_dims((x[:,:,0,:]), axis=2)   # pick the first feature
 y = np.expand_dims((y[:,:,0,:]), axis=2)    # pick the first feature
 train_dataset = MyDataset(x[0:int(0.7*x.shape[0])], y[0:int(0.7*y.shape[0])], t[0:int(0.7*t.shape[0])])
