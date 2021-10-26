@@ -22,7 +22,7 @@ def cheb_polynomial(L_tilde, K):
 
     N = L_tilde.shape[0]
 
-    cheb_polynomials = [np.identity(N), L_tilde.copy()]
+    cheb_polynomials = [torch.eye(N), torch.from_numpy(L_tilde)]
 
     for i in range(2, K):
         cheb_polynomials.append(
@@ -181,20 +181,20 @@ class cheb_conv_with_SAt(nn.Module):
                 beta_k = self.Beta[k]
 
                 # shape is (batch_size, #node, #feature_per_node)
-                rhs = self.batch_dot(T_k_with_at.transpose((0, 2, 1)), graph_signal)
+                rhs = self.batch_dot(T_k.permute(0, 2, 1), graph_signal)
 
                 # shape is (batch_size, #node, num_of_filters)
-                output = output + torch.mm( torch.mm(rhs, theta_k), beta_k)
+                output = output + torch.mm(F.relu(torch.mm(rhs, theta_k), beta_k))
 
             outputs.append(output.unsqueeze(-1))
 
-        return F.relu(torch.cat(outputs, dim=-1))
+        return torch.cat(outputs, dim=-1)
 
 class cheb_conv(nn.Module):
     '''
     K-order chebyshev graph convolution without Spatial Attention scores
     '''
-    def __init__(self, num_of_filters, K, cheb_polynomials, num_of_features, **kwargs):
+    def __init__(self, num_of_filters, K, cheb_polynomials, num_of_features):
         '''
         Parameters
         ----------
@@ -204,8 +204,7 @@ class cheb_conv(nn.Module):
 
         K: int, up K - 1 order chebyshev polynomials will be used in this convolution. It defines the neighbourhood distance of node aggragration.
         '''
-
-        super(cheb_conv_with_SAt, self).__init__(**kwargs)
+        super(cheb_conv, self).__init__()
         self.K = K
         self.num_of_filters = num_of_filters
         self.cheb_polynomials = cheb_polynomials
@@ -269,11 +268,11 @@ class cheb_conv(nn.Module):
                 beta_k = self.Beta[k]
 
                 # shape is (batch_size, #node, #feature_per_node)
-                rhs = self.batch_dot(T_k.transpose((0, 2, 1)), graph_signal)
+                rhs = self.batch_dot(T_k.permute(0, 2, 1), graph_signal)
 
                 # shape is (batch_size, #node, num_of_filters)
-                output = output + torch.mm( torch.mm(rhs, theta_k), beta_k)
+                output = output + torch.mm(F.relu(torch.mm(rhs, theta_k), beta_k))
 
             outputs.append(output.unsqueeze(-1))
 
-        return F.relu(torch.cat(outputs, dim=-1))
+        return torch.cat(outputs, dim=-1)

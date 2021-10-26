@@ -1,9 +1,11 @@
 __all__ = ['metr_la_data', 'PEMS_04', 'MyDataset', 'PEMS_04_for_traffic_transformer']
 
+
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import torch
 import pandas as pd
+import numpy as np
 
 def training_loader_construct(dataset,batch_num):
     'description'
@@ -58,7 +60,7 @@ def metr_la_data(path):
 
     return train_data_loader, test_data_loader
 
-def PEMS_04(path, n):
+def PEMS_04(path, m, n):
     'description'
     # this function is used for constructing the training data loader of PEMS data
     # the dataset has 59 days data, every 5 minutes per reading, 307 sensors, 3 features (PEMS04)
@@ -66,7 +68,8 @@ def PEMS_04(path, n):
     # path: the local path of the dataset
     # raw_data: (time_stamp, #node, feature_dim)
     # feature_dim: choose one of the feature for prediction 0: flow, 1: speed, 2: occupancy
-    # n: number of timestamp used for prediction of next time step
+    # m: number of timestamp used for prediction of next time step
+    # n: number of timestamp to be the target of our prediction
 
     # load the sensor data
     raw_data = np.load(path + '/pems04.npz', allow_pickle=False)['data']
@@ -79,8 +82,8 @@ def PEMS_04(path, n):
     num_nodes = np.size(raw_data,1)
     adj = np.zeros((num_nodes, num_nodes))
     for k in range(np.size(edge_attr)):
-        adj[edge_index[0,k], edge_index[1,k]] = edge_attr[k]
-        adj[edge_index[1,k], edge_index[0,k]] = edge_attr[k]
+        adj[int(edge_index[0,k]), int(edge_index[1,k])] = edge_attr[k]
+        adj[int(edge_index[1,k]), int(edge_index[0,k])] = edge_attr[k]
 
     # store the data
     x = []; y = []; t = []
@@ -89,9 +92,10 @@ def PEMS_04(path, n):
     reading_per_day =  24 * 60 / 5
     Time_stamp = np.linspace(0, 10, int(reading_per_day), endpoint=True)
 
-    for i in range(num_datapoints - 3*n):
-        x.append(raw_data[i:i+n, :, :])
-        y.append(raw_data[i+n-1:i+2*n-1, :, :])
+    for i in range(num_datapoints - 3*m):
+
+        x.append(np.transpose(raw_data[i:i+m, :, :], (1, 2, 0)))
+        y.append(np.transpose(raw_data[i+m:i+m+n, :, :], (1, 2, 0)))
         t.append(Time_stamp[int(i%reading_per_day)])
     x = np.array(x); y = np.array(y); t = np.array(t)
 

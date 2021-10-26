@@ -307,15 +307,15 @@ print(result.shape)
 
 
 
-# # define the model
-# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# edge_index = torch.from_numpy(edge_index.astype(int))
-# edge_attr = torch.from_numpy(edge_attr).float()
-# model = Net(num_nodes=307, num_features=1, edge_index=edge_index, edge_attr=edge_attr, num_timestep=4, device=device).to(device).float()
-# optimizer = torch.optim.Adam(model.parameters(), weight_decay=5e-4, lr=0.01)  # Only perform weight-decay on first convolution.
-# criterion = nn.MSELoss()
+# define the model
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+edge_index = torch.from_numpy(edge_index.astype(int))
+edge_attr = torch.from_numpy(edge_attr).float()
+model = Net(num_nodes=307, num_features=1, edge_index=edge_index, edge_attr=edge_attr, num_timestep=4, device=device).to(device).float()
+optimizer = torch.optim.Adam(model.parameters(), weight_decay=5e-4, lr=0.01)  # Only perform weight-decay on first convolution.
+criterion = nn.MSELoss()
 
-# print('finish intialization')
+print('finish intialization')
 
 
 def train(epoch, train_loader, model, optimize_operator, criterion, device):
