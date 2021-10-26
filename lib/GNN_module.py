@@ -119,6 +119,7 @@ class cheb_conv_with_SAt(nn.Module):
         self.num_of_filters = num_of_filters
         self.cheb_polynomials = cheb_polynomials
         self.Theta = nn.Parameter(torch.ones((self.K, num_of_features, self.num_of_filters)))
+        self.Beta = nn.Parameter(torch.ones((self.K, self.num_of_filters, num_of_features)))
 
     def batch_dot(self, x1, x2):
         '''
@@ -177,12 +178,13 @@ class cheb_conv_with_SAt(nn.Module):
 
                 # shape of theta_k is (#feature_per_node, num_of_filters)
                 theta_k = self.Theta[k]
+                beta_k = self.Beta[k]
 
                 # shape is (batch_size, #node, #feature_per_node)
                 rhs = self.batch_dot(T_k_with_at.transpose((0, 2, 1)), graph_signal)
 
                 # shape is (batch_size, #node, num_of_filters)
-                output = output + torch.mm(rhs, theta_k)
+                output = output + torch.mm( torch.mm(rhs, theta_k), beta_k)
 
             outputs.append(output.unsqueeze(-1))
 
@@ -208,6 +210,7 @@ class cheb_conv(nn.Module):
         self.num_of_filters = num_of_filters
         self.cheb_polynomials = cheb_polynomials
         self.Theta = nn.Parameter(torch.ones((self.K, num_of_features, self.num_of_filters)))
+        self.Beta = nn.Parameter(torch.ones((self.K, self.num_of_filters, num_of_features)))
 
     def batch_dot(self, x1, x2):
         '''
@@ -263,12 +266,13 @@ class cheb_conv(nn.Module):
 
                 # shape of theta_k is (#feature_per_node, num_of_filters)
                 theta_k = self.Theta[k]
+                beta_k = self.Beta[k]
 
                 # shape is (batch_size, #node, #feature_per_node)
                 rhs = self.batch_dot(T_k.transpose((0, 2, 1)), graph_signal)
 
                 # shape is (batch_size, #node, num_of_filters)
-                output = output + torch.mm(rhs, theta_k)
+                output = output + torch.mm( torch.mm(rhs, theta_k), beta_k)
 
             outputs.append(output.unsqueeze(-1))
 

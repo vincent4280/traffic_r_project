@@ -1,3 +1,5 @@
+__all__ = ['AST_GODE']
+
 import torch.nn as nn
 import torchdiffeq
 import torch
@@ -11,20 +13,21 @@ class init_hidden_state_encoder(nn.Module):
 
     Args:
     # cheb_polynomial: list of 2D tensor, each 2D tensor is of shape of (#node, #node)
+    # temporal_input_dim: temporal dimension of the graph signals
+    # temporal_hidden_dim: output dimension of the initial hidden state
 
     forward function input:
-    x: traffic state data (batch, #node, #feature, #time_step)
+    # x: traffic state data (batch, #node, #feature, temporal_input_dim)
 
     forward function output:
-    x: traffic state data (batch, #node, #feature, #time_step)    
+    # x: traffic state data (batch, #node, #feature, temporal_hidden_dim)    
     '''
 
-    def __init__(self, cheb_polynomial, temporal_input_dim, temporal_hidden_dim):
+    def __init__(self, cheb_polynomial, temporal_input_dim, temporal_hidden_dim, num_of_features):
         super(init_hidden_state_encoder).__init__()
 
         self.K = len(cheb_polynomial)
-
-        self.GNN_layer = cheb_conv(num_of_filters=1, K=self.K, cheb_polynomials=cheb_polynomial, num_of_features=1)
+        self.GNN_layer = cheb_conv(num_of_filters=64, K=self.K, cheb_polynomials=cheb_polynomial, num_of_features=num_of_features)
         self.time_conv1 = nn.Linear(in_features=temporal_input_dim, out_features=64)
         self.time_conv2 = nn.Linear(in_features=64, out_features=temporal_hidden_dim)
 
@@ -34,7 +37,7 @@ class init_hidden_state_encoder(nn.Module):
         x_after_Spatial_agg = self.GNN_layer.forward(x)
 
         # output is (batch, #node, #feature, temporal_hidden_dim)
-        x_after_ST_agg = self.time_conv2(self.time_conv1(x_after_Spatial_agg))
+        x_after_ST_agg = self.time_conv2(nn.ReLU(self.time_conv1(x_after_Spatial_agg)))
 
         return x_after_ST_agg
 
@@ -45,27 +48,30 @@ class ode_derivative_fun(nn.Module):
 
     Args:
     # cheb_polynomial: list of 2D tensor, each 2D tensor is of shape of (#node, #node)
+    # num_of_nodes: number of nodes of the graph
 
     forward function input:
     x: traffic state data (batch, #node, feature_dim, init_hidden_dim + 1)
+        where init_hidden_dim is the dimension of the hidden state
     t: time_stamp that current state is (0-D tensor)
 
     forward function output:
     derivative: traffic state data derivative (batch, #node, #feature, 1)    
     '''
 
-    def __init__(self, cheb_polynomials, num_of_nodes):
+    def __init__(self, cheb_polynomials, num_of_nodes, num_of_features, num_time_step):
         super(ode_derivative_fun).__init__()
 
+        K = len(cheb_polynomials)
         self.time_embed = nn.Linear(1, num_of_nodes)
-        self.att_layer = cheb_conv_with_SAt(num_of_filters=1, K=2, cheb_polynomials=cheb_polynomials, num_of_features=1)
-        self.Spatial_Attention_score = Spatial_Attention_layer(num_time_step=12, num_of_features=1, num_of_nodes=num_of_nodes)
+        self.att_layer = cheb_conv_with_SAt(num_of_filters=64, K=K, cheb_polynomials=cheb_polynomials, num_of_features=num_of_features)
+        self.Spatial_Attention_score = Spatial_Attention_layer(num_time_step=num_time_step, num_of_features=num_of_features, num_of_nodes=num_of_nodes)
 
     def forward(self, x, t):
         
         # encode the time_step information into x, output is (batch, #node, #feature, #time_stamp)
         (batchsize, num_nodes, feature_dim, time_stamp) = x.shape
-        time_info = self.time_embed(t).unsqueeze(0).squeeze(-1).squeeze(-1).repeat(batchsize,1,feature_dim,time_stamp)
+        time_info = self.time_embed(t.unsqueeze(0)).unsqueeze(0).squeeze(-1).squeeze(-1).repeat(batchsize,1,feature_dim,time_stamp)
         x = x + time_info
 
         spatial_attention = self.Spatial_Attention_score(x)
@@ -104,50 +110,74 @@ class ControlledGDEFunc(nn.Module):
                      Requires assignment of '.h0' before calling .forward
         
         Args:
-        K: the order of neighbour of the chebshev convolution
+        # x: input graph signal (batch, #node, #feature, temporal_input_dim)
+        # adj: adjacent matrix (#node, #node)
+        # K: the order of neighbour of the chebshev convolution
+        # temporal_input_dim: temporal input dimension of the graph signal
+        # temporal_hidden_dim: temporal dimension of the hidden initial state
         
         forward function input:
-        x: current traffic state, not the hidden state ()
-        t: current time step (int)
+        # x: current traffic state, not the hidden state (batch, #node, #feature, temporal_input_dim)
+        # t: current time step (0-D tensor)
 
         forward function output:
-        x: after the operation of gnn we can obtain the derivative of the state with respect to time
+        # x: after the operation of gnn we can obtain the derivative of the state with respect to time
         
         """
 
-        """ Controlled GDE version. Input information is preserved longer via hooks to input node features X_0, 
-            affecting all ODE function steps. Requires assignment of '.h0' before calling .forward"""
-
-        super().__init__()
+        super(ControlledGDEFunc).__init__()
         self.nfe = 0
 
         (batchsize, num_nodes, feature_dim, time_stamp) = x.shape
 
         cheb_polynomials = cheb_polynomial(adj, K)
-        self.Hinit_encoder = init_hidden_state_encoder(cheb_polynomials, temporal_input_dim, temporal_hidden_dim)
+        self.Hinit_encoder = init_hidden_state_encoder(x, cheb_polynomials, temporal_input_dim, temporal_hidden_dim, feature_dim)
         self.h0 = self.Hinit_encoder.forward(x=x)
 
-        self.derivative_calculator = ode_derivative_fun(cheb_polynomials, num_nodes)
+        self.derivative_calculator = ode_derivative_fun(cheb_polynomials, num_nodes, feature_dim, time_stamp)
           
     def forward(self, t, x):
         self.nfe += 1
-        x = torch.cat([x, self.h0], dim=-1)    # self.h0 应该是 self.gnn 里面定义的一个变量
-        x = self.derivative_calculator.forward(x=x, t=t)
+        x = torch.cat([x, self.h0], dim=-1)   
+        derivative = self.derivative_calculator.forward(x=x, t=t)
 
-        return x 
+        return derivative
 
 class AST_GODE(nn.Module):
-    def __init__(self, x, adj, K, temporal_input_dim, temporal_hidden_dim, method:str='dopri5', rtol:float=1e-3, atol:float=1e-4, adjoint:bool=True):
+
+    """ 
+    description: Attention based graph neural ODE
+    
+    Args:
+    # x: input graph signal (batch, #node, #feature, #time_step)
+    # adj: adjacent matrix (#node, #node)
+    # K: hyper-parameter of the chebshev graph convolution
+    # temporal_hidden_dim: hidden dimension of the inital hidden state
+    # method:str = {'euler', 'rk4', 'dopri5', 'adams'}
+    # rtol: relative error tolerance
+    # atol: absolute error tolerance
+    # adjoint: binary variable as a flag whether using adjoint method
+
+    forward function input:
+    # x: current traffic state, initial state of the forward (batch, #node, #feature, 1)
+    # T: evaluation point of neural ODE (1D tensor)
+
+    forward function output
+    # out[1:(out.shape[0])]: 5D tensor (evaluation_time-1, batch, #node, #feature, 1)
+    """
+
+    def __init__(self, x, adj, K, temporal_hidden_dim, method:str='dopri5', rtol:float=1e-3, atol:float=1e-4, adjoint:bool=True):
         super(AST_GODE).__init__()
-        self.layers = nn.ModuleList()       # 创建一个空的 layer list
+
+        temporal_input_dim = x.shape[3]
         self.odefunc = ControlledGDEFunc(x, adj, K, temporal_input_dim, temporal_hidden_dim)
         self.method = method
         self.rtol = rtol
         self.atol = atol
         self.ajoint_flag = adjoint
 
-    def forward(self, x:torch.Tensor, T:int=1):
-        self.integration_time = torch.tensor([0, T]).float()
+    def forward(self, x:torch.Tensor, T:torch.Tensor):
+        self.integration_time = T.float()
         self.integration_time = self.integration_time.type_as(x)   # 转换t_interval 为与x相同的数据结构
         
         if self.adjoint_flag:
@@ -157,11 +187,10 @@ class AST_GODE(nn.Module):
             out = torchdiffeq.odeint(self.odefunc, x, self.integration_time,
                                      rtol=self.rtol, atol=self.atol, method=self.method)
             
-        return out[-1]    # 输出最后一步的结果
+        return out[1:(out.shape[0])]    # output the result of the evaluation points
     
     def forward_batched(self, x:torch.Tensor, nn:int, indices:list, timestamps:set):
         """ Modified forward for ODE batches with different integration times """
-
 
         timestamps = torch.Tensor(list(timestamps))
         if self.adjoint_flag:
