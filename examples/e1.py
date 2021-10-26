@@ -44,12 +44,12 @@ def train(epoch, train_loader, model, optimize_operator, criterion, num_eval_poi
         y = y.to(device)
         t = t.to(device)
 
+        print('calculating ODE')
         optimize_operator.zero_grad()
         t_span = torch.linspace(0, 0.5*num_eval_point, num_eval_point+1).float()
         yhat = model.forward(x=x, T=t, t_span=t_span)
 
-        print('calculating ODE')
-        loss = criterion(yhat, y)
+        loss = criterion(yhat.squeeze(0).unsqueeze(-1), y)
         loss.backward()
         train_loss += loss.item()
         optimize_operator.step()

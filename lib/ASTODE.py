@@ -3,6 +3,10 @@ __all__ = ['AST_GODE']
 import torch.nn as nn
 import torchdiffeq
 import torch
+import sys, os
+
+# for debug
+os.chdir(sys.path[0])
 from lib.GNN_module import *
 
 
@@ -77,7 +81,7 @@ class ode_derivative_fun(nn.Module):
         (batchsize, num_nodes, feature_dim, time_stamp) = x.shape
 
         # encode the time_step information into x, output is (batch, #node, #feature, #time_stamp)
-        t = t.unsqueeze(0).unsqueeze(0).repeat(batchsize,1)
+        t = t.reshape(1,1).repeat(batchsize,1)
         time_info = self.time_embed(t).unsqueeze(-1).unsqueeze(-1).repeat(1,1,feature_dim, time_stamp)
         x = x + time_info
 
@@ -141,9 +145,6 @@ class ControlledGDEFunc(nn.Module):
         self.Hinit_encoder = init_hidden_state_encoder(cheb_polynomials, temporal_input_dim, temporal_hidden_dim, feature_dim)
         self.derivative_calculator = ode_derivative_fun(cheb_polynomials, num_nodes, feature_dim, temporal_hidden_dim + 1)
     
-    def init_hidden(self, x, T):
-        self.h0 = self.Hinit_encoder.forward(x=x, T=0)
-
     def forward(self, t, x):
         self.nfe += 1
         x = x.unsqueeze(-1)
@@ -151,6 +152,10 @@ class ControlledGDEFunc(nn.Module):
         derivative = self.derivative_calculator.forward(x=x, t=t)
 
         return derivative
+
+    def init_hidden(self, x, T):
+        self.h0 = self.Hinit_encoder.forward(x=x, T=T)
+
 
 class AST_GODE(nn.Module):
 
@@ -176,7 +181,7 @@ class AST_GODE(nn.Module):
     # out[1:(out.shape[0])]: 5D tensor (evaluation_time-1, batch, #node, #feature, 1)
     """
 
-    def __init__(self, x, adj, K, temporal_hidden_dim, method:str='dopri5', rtol:float=1e-3, atol:float=1e-4, adjoint:bool=True):
+    def __init__(self, x, adj, K, temporal_hidden_dim, method:str='euler', rtol:float=1e-3, atol:float=1e-4, adjoint:bool=True):
         super(AST_GODE, self).__init__()
 
         temporal_input_dim = x.shape[3]
@@ -195,15 +200,12 @@ class AST_GODE(nn.Module):
         # obtain integration time_stamp
         self.integration_time = t_span.float()
         self.integration_time = self.integration_time.type_as(x)   # 转换t_interval 为与x相同的数据结构
-
-        print(self.integration_time.shape)
-        print((x[:,:,:,-1]).shape)
         
         if self.adjoint_flag:
             out = torchdiffeq.odeint_adjoint(self.odefunc, x[:,:,:,-1], self.integration_time, rtol=self.rtol, atol=self.atol, method=self.method)
         else:
             out = torchdiffeq.odeint(self.odefunc, x[:,:,:,-1], self.integration_time, rtol=self.rtol, atol=self.atol, method=self.method)
-            
+
         return out[1:(out.shape[0])]    # output the result of the evaluation points
     
     def forward_batched(self, x:torch.Tensor, nn:int, indices:list, timestamps:set):
