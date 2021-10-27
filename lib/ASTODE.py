@@ -65,7 +65,7 @@ class ode_derivative_fun(nn.Module):
     t: time_stamp that current state is (0-D tensor)
 
     forward function output:
-    derivative: traffic state data derivative (batch, #node, #feature, 1)    
+    derivative: traffic state data derivative (batch, #node, #feature)    
     '''
 
     def __init__(self, cheb_polynomials, num_of_nodes, num_of_features, num_time_step):
@@ -85,8 +85,11 @@ class ode_derivative_fun(nn.Module):
         time_info = self.time_embed(t).unsqueeze(-1).unsqueeze(-1).repeat(1,1,feature_dim, time_stamp)
         x = x + time_info
 
+        # use initial hidden state and current state coupled with time information to calculate attention matrix 
         spatial_attention = self.Spatial_Attention_score(x)
-        derivative = self.att_layer(x, spatial_attention)
+
+        # use the current state as the initial condition for the ODE
+        derivative = self.att_layer((x[:,:,:,0]).unsqueeze(-1), spatial_attention)
 
         return derivative.squeeze(-1)
 
@@ -143,12 +146,13 @@ class ControlledGDEFunc(nn.Module):
 
         cheb_polynomials = cheb_polynomial(adj, K)
         self.Hinit_encoder = init_hidden_state_encoder(cheb_polynomials, temporal_input_dim, temporal_hidden_dim, feature_dim)
-        self.derivative_calculator = ode_derivative_fun(cheb_polynomials, num_nodes, feature_dim, temporal_hidden_dim + 1)
-    
+        self.derivative_calculator = ode_derivative_fun(cheb_polynomials, num_nodes, feature_dim, temporal_hidden_dim+1)
+
+
     def forward(self, t, x):
         self.nfe += 1
         x = x.unsqueeze(-1)
-        x = torch.cat([x, self.h0], dim=-1)   
+        x = torch.cat([x, self.h0], dim=-1)  
         derivative = self.derivative_calculator.forward(x=x, t=t)
 
         return derivative
@@ -201,12 +205,16 @@ class AST_GODE(nn.Module):
         self.integration_time = t_span.float()
         self.integration_time = self.integration_time.type_as(x)   # 转换t_interval 为与x相同的数据结构
         
+        # use last traffic state as the initial condition for neural ODE
+        # out: (time_step, batch, #node, #feature, 1)
         if self.adjoint_flag:
             out = torchdiffeq.odeint_adjoint(self.odefunc, x[:,:,:,-1], self.integration_time, rtol=self.rtol, atol=self.atol, method=self.method)
         else:
             out = torchdiffeq.odeint(self.odefunc, x[:,:,:,-1], self.integration_time, rtol=self.rtol, atol=self.atol, method=self.method)
 
-        return out[1:(out.shape[0])]    # output the result of the evaluation points
+        out = out.permute(1,2,3,0)
+
+        return out[:,:,:,1:(out.shape[0])]    # output the result of the evaluation points
     
     def forward_batched(self, x:torch.Tensor, nn:int, indices:list, timestamps:set):
         """ Modified forward for ODE batches with different integration times """

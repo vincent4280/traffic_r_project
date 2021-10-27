@@ -35,7 +35,6 @@ criterion = nn.MSELoss()
 
 print('finish intialization')
 
-
 def train(epoch, train_loader, model, optimize_operator, criterion, num_eval_point, device):
     train_loss = 0
     for batch_idx, (x, y, t) in enumerate(train_loader):
@@ -46,10 +45,10 @@ def train(epoch, train_loader, model, optimize_operator, criterion, num_eval_poi
 
         print('calculating ODE')
         optimize_operator.zero_grad()
-        t_span = torch.linspace(0, 0.5*num_eval_point, num_eval_point+1).float()
+        t_span = torch.linspace(0, 0.1*num_eval_point, num_eval_point+1).float()
         yhat = model.forward(x=x, T=t, t_span=t_span)
 
-        loss = criterion(yhat.squeeze(0).unsqueeze(-1), y)
+        loss = criterion(yhat, y)
         loss.backward()
         train_loss += loss.item()
         optimize_operator.step()
@@ -63,7 +62,7 @@ def test(epoch, test_loader, model, num_eval_point, device):
         for batch_idx, (x, y, t) in enumerate(test_loader):
 
             x = x.to(device)
-            t_span = torch.linspace(0, 0.5*num_eval_point, num_eval_point+1).float()
+            t_span = torch.linspace(0, 0.1*num_eval_point, num_eval_point+1).float()
             yhat = model.forward(x=x, T=t, t_span=t_span)
 
             print('calculating ODE')
@@ -73,11 +72,25 @@ def test(epoch, test_loader, model, num_eval_point, device):
     return test_loss
 
 
-for epoch in range(1):
+for time_step in range(0,12):
 
-    model, train_loss = train(epoch, train_loader, model, optimizer, criterion, predict_time_steps, device)
-    test_loss = test(epoch, test_loader, model, predict_time_steps, device)
-    print('epoch:', epoch, 'training loss:', train_loss, 'test_loss:', test_loss)
+    x, y, t, adj = PEMS_04(r'../../data/PEMS04', 12, time_step+1)
+    x = np.expand_dims((x[:,:,0,:]), axis=2)   # pick the first feature
+    y = np.expand_dims((y[:,:,0,:]), axis=2)    # pick the first feature
+
+    # construct the training data loader for "n time_step" prediction
+    train_dataset = MyDataset(x[0:int(0.7*x.shape[0])], y[0:int(0.7*y.shape[0])], t[0:int(0.7*t.shape[0])])
+    test_dataset = MyDataset(x[int(0.8*x.shape[0]):int(0.99*x.shape[0])], y[int(0.8*y.shape[0]):int(0.99*y.shape[0])], t[int(0.8*t.shape[0]):int(0.99*t.shape[0])])
+    train_loader = DataLoader(dataset=train_dataset, batch_size=100, shuffle=True)
+    test_loader = DataLoader(dataset=test_dataset, batch_size=100, shuffle=True)
+
+    for epoch in range(1000):
+
+        model, train_loss = train(epoch, train_loader, model, optimizer, criterion, time_step+1, device)
+
+        if epoch % 100 == 0:
+            test_loss = test(epoch, test_loader, model, time_step+1, device)
+            print('epoch:', epoch, 'training loss:', train_loss, 'test_loss:', test_loss)
 
         
 
