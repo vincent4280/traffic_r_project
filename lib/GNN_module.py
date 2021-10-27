@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 
 
-def cheb_polynomial(L_tilde, K):
+def cheb_polynomial(L_tilde, K, device):
     '''
     description: compute a list of chebyshev polynomials from T_0 to T_{K-1} 
 
@@ -22,7 +22,7 @@ def cheb_polynomial(L_tilde, K):
 
     N = L_tilde.shape[0]
 
-    cheb_polynomials = [torch.eye(N).float(), torch.from_numpy(L_tilde).float()]
+    cheb_polynomials = [torch.eye(N).to(device).float(), torch.from_numpy(L_tilde).to(device).float()]
 
     for i in range(2, K):
         cheb_polynomials.append(

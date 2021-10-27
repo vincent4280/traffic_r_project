@@ -146,7 +146,7 @@ class ControlledGDEFunc(nn.Module):
 
         (batchsize, num_nodes, feature_dim, time_stamp) = x.shape
 
-        cheb_polynomials = cheb_polynomial(adj, K).to(device)
+        cheb_polynomials = cheb_polynomial(adj, K, device)
         self.Hinit_encoder = init_hidden_state_encoder(cheb_polynomials, temporal_input_dim, temporal_hidden_dim, feature_dim).to(device)
         self.derivative_calculator = ode_derivative_fun(cheb_polynomials, num_nodes, feature_dim, temporal_hidden_dim+1).to(device)
 

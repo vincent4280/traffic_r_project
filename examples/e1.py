@@ -33,6 +33,7 @@ model = AST_GODE(x=x_example, adj=adj, K=2, temporal_hidden_dim=3, device=device
 optimizer = torch.optim.Adam(model.parameters(), weight_decay=5e-4, lr=0.001)  
 criterion = nn.MSELoss()
 
+
 print('finish intialization')
 
 def train(epoch, train_loader, model, optimize_operator, criterion, num_eval_point, device):
@@ -87,6 +88,9 @@ for time_step in range(0,12):
     for epoch in range(1000):
 
         model, train_loss = train(epoch, train_loader, model, optimizer, criterion, time_step+1, device)
+
+        if epoch % 100 == 0:
+            torch.save(model, r'./model.pkl')
 
         if epoch % 100 == 0:
             test_loss = test(epoch, test_loader, model, time_step+1, device)
