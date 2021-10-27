@@ -4,10 +4,12 @@ import torch.nn as nn
 import torchdiffeq
 import torch
 import sys, os
+from typing import Callable
 
 # for debug
 os.chdir(sys.path[0])
-from lib.GNN_module import *
+
+from .GNN_module import *
 
 
 class init_hidden_state_encoder(nn.Module):
@@ -94,7 +96,7 @@ class ode_derivative_fun(nn.Module):
         return derivative.squeeze(-1)
 
 class GDEFunc(nn.Module):
-    def __init__(self, gnn:nn.Module):
+    def __init__(self, gnn):
         """
         description: General GDE function class. To be passed to an ODEBlock
         
@@ -106,17 +108,17 @@ class GDEFunc(nn.Module):
         x: after the operation of gnn we can obtain the derivative of the state with respect to time
         
         """
-        super().__init__()
+        super(GDEFunc, self).__init__()
         self.gnn = gnn
         self.nfe = 0
             
-    def forward(self, t, x):   # 模拟derivative的项与t无关
+    def forward(self, t, x): 
         self.nfe += 1
         x = self.gnn(x)
         return x
 
 class ControlledGDEFunc(nn.Module):
-    def __init__(self, x, adj, K, temporal_input_dim, temporal_hidden_dim):
+    def __init__(self, x, adj, K, temporal_input_dim, temporal_hidden_dim, device):
 
         """
         description: Controlled GDE function class. To be passed to an ODEBlock
@@ -144,9 +146,9 @@ class ControlledGDEFunc(nn.Module):
 
         (batchsize, num_nodes, feature_dim, time_stamp) = x.shape
 
-        cheb_polynomials = cheb_polynomial(adj, K)
-        self.Hinit_encoder = init_hidden_state_encoder(cheb_polynomials, temporal_input_dim, temporal_hidden_dim, feature_dim)
-        self.derivative_calculator = ode_derivative_fun(cheb_polynomials, num_nodes, feature_dim, temporal_hidden_dim+1)
+        cheb_polynomials = cheb_polynomial(adj, K).to(device)
+        self.Hinit_encoder = init_hidden_state_encoder(cheb_polynomials, temporal_input_dim, temporal_hidden_dim, feature_dim).to(device)
+        self.derivative_calculator = ode_derivative_fun(cheb_polynomials, num_nodes, feature_dim, temporal_hidden_dim+1).to(device)
 
 
     def forward(self, t, x):
@@ -185,25 +187,26 @@ class AST_GODE(nn.Module):
     # out[1:(out.shape[0])]: 5D tensor (evaluation_time-1, batch, #node, #feature, 1)
     """
 
-    def __init__(self, x, adj, K, temporal_hidden_dim, method:str='euler', rtol:float=1e-3, atol:float=1e-4, adjoint:bool=True):
+    def __init__(self, x, adj, K, temporal_hidden_dim, device, method='dopri5', rtol=1e-3, atol=1e-4, adjoint=True):
         super(AST_GODE, self).__init__()
 
         temporal_input_dim = x.shape[3]
-        self.odefunc = ControlledGDEFunc(x, adj, K, temporal_input_dim, temporal_hidden_dim)
+        self.odefunc = ControlledGDEFunc(x, adj, K, temporal_input_dim, temporal_hidden_dim, device)
         
         self.method = method
         self.rtol = rtol
         self.atol = atol
         self.adjoint_flag = adjoint
+        self.device = device
 
-    def forward(self, x:torch.Tensor, T, t_span:torch.Tensor):
+    def forward(self, x, T, t_span):
 
         # perform ST_encoding for input gragh signal
         self.odefunc.init_hidden(x, T)
 
         # obtain integration time_stamp
-        self.integration_time = t_span.float()
-        self.integration_time = self.integration_time.type_as(x)   # 转换t_interval 为与x相同的数据结构
+        self.integration_time = t_span.float().to(self.device)
+        self.integration_time = self.integration_time.type_as(x)   # change t_interval to be the same type of x
         
         # use last traffic state as the initial condition for neural ODE
         # out: (time_step, batch, #node, #feature, 1)
@@ -216,7 +219,7 @@ class AST_GODE(nn.Module):
 
         return out[:,:,:,1:(out.shape[0])]    # output the result of the evaluation points
     
-    def forward_batched(self, x:torch.Tensor, nn:int, indices:list, timestamps:set):
+    def forward_batched(self, x, nn, indices, timestamps):
         """ Modified forward for ODE batches with different integration times """
 
         timestamps = torch.Tensor(list(timestamps))
@@ -238,7 +241,7 @@ class AST_GODE(nn.Module):
         return torch.cat(b_out).to(odeout.device)
               
         
-    def trajectory(self, x:torch.Tensor, T:int, num_points:int):
+    def trajectory(self, x, T, num_points):
         self.integration_time = torch.linspace(0, T, num_points)
         self.integration_time = self.integration_time.type_as(x)
         out = torchdiffeq.odeint(self.odefunc, x, self.integration_time,

@@ -29,7 +29,7 @@ for batch_idx, (x, y, t) in enumerate(train_loader):
     predict_time_steps = y.shape[-1]
     break
 
-model = AST_GODE(x=x_example, adj=adj, K=2, temporal_hidden_dim=3).to(device).float()
+model = AST_GODE(x=x_example, adj=adj, K=2, temporal_hidden_dim=3, device=device).to(device).float()
 optimizer = torch.optim.Adam(model.parameters(), weight_decay=5e-4, lr=0.001)  
 criterion = nn.MSELoss()
 
